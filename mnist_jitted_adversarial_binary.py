@@ -530,30 +530,18 @@ class Adversarial:
                 labels = jnp.argmax(y_batch, axis=1)
 
                 if tpe == "FGSM":
-                    fgsm_start=time.time()
                     x_adv_batch = attack_fn(x_batch, y_batch, self.params, self.model_fn, eps)
-                    fgsm_time = time.time() - fgsm_start
-                    print(f"    FGSM time: {fgsm_time:.3f}s")
                 elif tpe == "PGD":
                     steps = kwargs.get("steps", 100)
-                    pgd_start=time.time()
                     x_adv_batch = attack_fn(x_batch, y_batch, self.params, self.model_fn, eps, steps)
-                    pgd_time = time.time() - pgd_start
-                    print(f"    PGD time: {pgd_time:.3f}s")
                 elif tpe == "MIM":
                     steps = kwargs.get("steps", 100)
                     decay = kwargs.get("decay", 1.0)
-                    mim_start=time.time()
                     x_adv_batch = attack_fn(x_batch, y_batch, self.params, self.model_fn, eps, steps, decay)
-                    mim_time = time.time() - mim_start
-                    print(f"    MIM time: {mim_time:.3f}s")
                 elif tpe == "APGD":
                     steps = kwargs.get("steps", 100)
                     decay = kwargs.get("decay", 0.75)
-                    apgd_start=time.time()
                     x_adv_batch = attack_fn(x_batch, y_batch, self.params, self.model_fn, eps, steps, decay)
-                    apgd_time = time.time() - apgd_start
-                    print(f"    APGD time: {apgd_time:.3f}s")
                 
                 logits_adv = self._jitted_predict(self.model_fn, self.params, x_adv_batch)
                 preds_adv = jnp.argmax(logits_adv, axis=1)
@@ -788,51 +776,46 @@ def train_single_qvt_model(
         print("Lipschitz constant measurement disabled for faster training")
 
     for epoch in range(n_epochs):
-        epoch_start_time = time.time()
-        t_data = 0.0
-        t_train = 0.0
-        t_lipschitz = 0.0
-        t_fidelity = {atk: 0.0 for atk in attack_list}
-        t_val = 0.0
-        # --- Training Loop ---
-        last_batch_x = None  # Store last batch for Lipschitz computation
-        data_prep_start = time.time()
-        # (Data loading/prep is minimal here, but we time the batch prep below)
+        start_time = time.time()
         epoch_train_loss, epoch_train_acc, num_train_batches = 0.0, 0.0, 0
+        last_batch_x = None  # Store last batch for Lipschitz computation
+        
         for batch_idx, (x_batch_torch, y_batch_torch) in enumerate(train_loader):
-            batch_start = time.time()
             x_np = x_batch_torch.numpy()
             y_np = y_batch_torch.numpy().reshape(-1, 1)
+
             x_np_denormalized = (x_np * mnist_std_np) + mnist_mean_np
             x_np = np.clip(x_np_denormalized, 0., 1.)
             x_np_hwc = x_np.transpose(0, 2, 3, 1)
+
             x_patches_np = create_patches(x_np_hwc, patch_size=PATCH_SIZE_MNIST)
             x_jax_batch, y_jax_batch = jnp.array(x_patches_np), jnp.array(y_np)
-            t_data += time.time() - batch_start
-            train_start = time.time()
+
             current_params, current_opt_state, b_loss, b_acc = update_batch(
                 current_params, current_opt_state, x_jax_batch, y_jax_batch
             )
-            t_train += time.time() - train_start
             epoch_train_loss += b_loss; epoch_train_acc += b_acc; num_train_batches += 1
+            
+            # Store last batch for Lipschitz computation
             last_batch_x = x_jax_batch
+
         avg_epoch_train_loss = epoch_train_loss / num_train_batches
         avg_epoch_train_acc = epoch_train_acc / num_train_batches
-        # --- Lipschitz ---
-        lipschitz_info = ""
-        lipschitz_start = time.time()
+
+        # Compute Lipschitz constant using the last batch
         if last_batch_x is not None and measure_lipschitz and (epoch + 1) % lipschitz_frequency == 0:
             lipschitz_l2 = float(lipschitz_bound_qvt(qvt_model_trained_instance, current_params, last_batch_x, "l2"))
             lipschitz_inf = float(lipschitz_bound_qvt(qvt_model_trained_instance, current_params, last_batch_x, "inf"))
             lipschitz_constants["l2"].append(lipschitz_l2)
             lipschitz_constants["inf"].append(lipschitz_inf)
             lipschitz_info = f" | Lipschitz L2: {lipschitz_l2:.6f} | Lipschitz Inf: {lipschitz_inf:.6f}"
-        t_lipschitz += time.time() - lipschitz_start
-        # --- Fidelity (Adversarial) ---
+        else:
+            lipschitz_info = ""
+
+        # Calculate fidelity for each attack type using test set (conditionally)
         if measure_fidelity and (epoch + 1) % fidelity_frequency == 0:
-            attacker = Adversarial(qvt_model_trained_instance, current_params, all_x_test_patches, all_y_test_one_hot, batch_size=512)
+            attacker = Adversarial(qvt_model_trained_instance, current_params, all_x_test_patches, all_y_test_one_hot, batch_size=64)
             for atk in attack_list:
-                atk_start = time.time()
                 if atk == "FGSM":
                     fidel_val = attacker.run(tpe=atk, eps=8/255, fidelity_only=True)
                 elif atk == "PGD":
@@ -841,10 +824,9 @@ def train_single_qvt_model(
                     fidel_val = attacker.run(tpe=atk, eps=8/255, steps=30, decay=1.0, fidelity_only=True)
                 elif atk == "APGD":
                     fidel_val = attacker.run(tpe=atk, eps=8/255, steps=30, decay=0.75, fidelity_only=True)
-                t_fidelity[atk] += time.time() - atk_start
+                
                 fidelity[atk].append(fidel_val)
-        # --- Validation ---
-        val_start = time.time()
+
         if val_loader and (epoch + 1) % 5 == 0:
             val_losses, val_accs, val_batches = 0,0,0
             for x_val_torch, y_val_torch in val_loader:
@@ -852,19 +834,14 @@ def train_single_qvt_model(
                 x_val_np = np.clip(x_val_np, 0., 1.).transpose(0,2,3,1)
                 x_val_patches = create_patches(x_val_np)
                 y_val_np_int = y_val_torch.numpy().reshape(-1,1)
+                
                 logits_val = qvt_model_trained_instance(jnp.array(x_val_patches), current_params)
                 val_losses += jnp.mean(softmax_cross_entropy_with_integer_labels(logits_val, jnp.array(y_val_np_int)))
                 val_accs += accuracy_binary(logits_val, jnp.array(y_val_np_int))
                 val_batches +=1
-            t_val += time.time() - val_start
-            print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {avg_epoch_train_loss:.4f} | Train Acc: {avg_epoch_train_acc:.4f} | Val Loss: {val_losses/val_batches:.4f} | Val Acc: {val_accs/val_batches:.4f}{lipschitz_info} | Time: {time.time() - epoch_start_time:.2f}s")
+            print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {avg_epoch_train_loss:.4f} | Train Acc: {avg_epoch_train_acc:.4f} | Val Loss: {val_losses/val_batches:.4f} | Val Acc: {val_accs/val_batches:.4f}{lipschitz_info} | Time: {time.time() - start_time:.2f}s")
         else:
-            t_val += time.time() - val_start
-            print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {avg_epoch_train_loss:.4f} | Train Acc: {avg_epoch_train_acc:.4f}{lipschitz_info} | Time: {time.time() - epoch_start_time:.2f}s")
-        # --- Timing summary ---
-        print(f"  Timing (s): DataPrep={t_data:.2f}, Train={t_train:.2f}, Lipschitz={t_lipschitz:.2f}, "
-              + ", ".join([f'Fid_{atk}={t_fidelity[atk]:.2f}' for atk in attack_list])
-              + f", Val={t_val:.2f}, Total={time.time() - epoch_start_time:.2f}")
+            print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {avg_epoch_train_loss:.4f} | Train Acc: {avg_epoch_train_acc:.4f}{lipschitz_info} | Time: {time.time() - start_time:.2f}s")
             
     # Note: fidelity dictionary will be empty if measure_fidelity=False, 
     # or will contain values only for epochs that match fidelity_frequency
@@ -895,7 +872,7 @@ def run_binary_adversarial_experiments():
             # 3. No fidelity tracking (fastest): measure_fidelity=False
             # 4. End-of-training only: measure_fidelity=True, fidelity_frequency=n_epochs
             trained_qvt_params, qvt_model_instance, fidelity, lipschitz_constants = train_single_qvt_model(
-                n_train=10000, n_test_val=2000, n_epochs=2, batch_size=64, class_pair=class_pair,
+                n_train=10000, n_test_val=2000, n_epochs=100, batch_size=64, class_pair=class_pair,
                 s_val=S_VALUE_MNIST, num_q_n=N_QUBITS, d_val=D_QSAL,
                 num_layers_val=NUM_LAYERS, d_patch_val=D_PATCH_VALUE, 
                 input_patch_dim_val=INPUT_PATCH_DIM_MNIST, num_classes_val=NUM_CLASSES,
