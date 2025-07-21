@@ -389,87 +389,6 @@ class QSAL_pennylane:
                 idx += 1
         return [qml.expval(qml.PauliZ(0))]
 
-    # @staticmethod
-    # def _generate_observables(num_qubits, num_observables_needed):
-    #     candidate_observables = []
-    #     paulis = [qml.PauliX, qml.PauliY, qml.PauliZ]
-
-    #     # 1. Single-qubit observables
-    #     if len(candidate_observables) < num_observables_needed:
-    #         for i in range(num_qubits):
-    #             for P_constructor in paulis:
-    #                 if len(candidate_observables) < num_observables_needed:
-    #                     candidate_observables.append(P_constructor(wires=i))
-    #                 else:
-    #                     break
-    #             if len(candidate_observables) >= num_observables_needed:
-    #                 break
-        
-    #     # 2. Two-qubit observables
-    #     if len(candidate_observables) < num_observables_needed:
-    #         for i in range(num_qubits):
-    #             for j in range(i + 1, num_qubits): # Ensure i < j for unique pairs of qubits
-    #                 for P1_constructor in paulis:
-    #                     for P2_constructor in paulis:
-    #                         if len(candidate_observables) < num_observables_needed:
-    #                             candidate_observables.append(P1_constructor(wires=i) @ P2_constructor(wires=j))
-    #                         else:
-    #                             break
-    #                     if len(candidate_observables) >= num_observables_needed:
-    #                         break
-    #                 if len(candidate_observables) >= num_observables_needed:
-    #                     break
-    #             if len(candidate_observables) >= num_observables_needed:
-    #                 break
-        
-    #     # 3. Three-qubit observables
-    #     if len(candidate_observables) < num_observables_needed:
-    #         for i in range(num_qubits):
-    #             for j in range(i + 1, num_qubits):
-    #                 for k in range(j + 1, num_qubits): # Ensure i < j < k
-    #                     for P1_constructor in paulis:
-    #                         for P2_constructor in paulis:
-    #                             for P3_constructor in paulis:
-    #                                 if len(candidate_observables) < num_observables_needed:
-    #                                     candidate_observables.append(
-    #                                         P1_constructor(wires=i) @ P2_constructor(wires=j) @ P3_constructor(wires=k)
-    #                                     )
-    #                                 else:
-    #                                     break
-    #                             if len(candidate_observables) >= num_observables_needed:
-    #                                 break
-    #                         if len(candidate_observables) >= num_observables_needed:
-    #                             break
-    #                     if len(candidate_observables) >= num_observables_needed:
-    #                         break
-    #                 if len(candidate_observables) >= num_observables_needed:
-    #                     break
-    #             if len(candidate_observables) >= num_observables_needed:
-    #                 break
-
-    #     if len(candidate_observables) >= num_observables_needed:
-    #         return candidate_observables[:num_observables_needed]
-    #     else:
-    #         # Fallback: Not enough unique observables generated with up to 3-qubit Paulis
-    #         print(f"Warning: Generated only {len(candidate_observables)} unique Pauli string observables (up to 3 qubits) "
-    #               f"for {num_qubits} qubits, but needed {num_observables_needed}. "
-    #               "Repeating from the generated set to fill the remainder.")
-            
-    #         final_observables = list(candidate_observables) # Start with what we have
-    #         if not final_observables: # e.g. num_qubits = 0
-    #             if num_observables_needed > 0:
-    #                 raise ValueError(f"Cannot generate {num_observables_needed} observables with {num_qubits} qubits.")
-    #             else:
-    #                 return [] # Return empty list if 0 observables needed and 0 generated
-
-    #         # Cycle through the generated unique observables to fill the remainder
-    #         # This ensures the list has 'num_observables_needed' items.
-    #         idx = 0
-    #         while len(final_observables) < num_observables_needed:
-    #             final_observables.append(candidate_observables[idx % len(candidate_observables)])
-    #             idx += 1
-    #         return final_observables
-
     def __call__(self, input_sequence, layer_params):
         # layer_params contains: Q, K, V circuit weights, ln1_gamma, ln1_beta, ffn_w1, ffn_b1, ffn_w2, ffn_b2, ln2_gamma, ln2_beta
         batch_size = input_sequence.shape[0]
@@ -934,7 +853,7 @@ def train_qvit(n_train, n_test, n_epochs, batch_size=64, rep_num=0, lipschitz_fr
         # Load test data for fidelity evaluation (load once, reuse)
         transform_raw_test = transforms.Compose([transforms.ToTensor()])
         testset_full_raw = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_raw_test)
-        indices = np.random.choice(len(testset_full_raw), 50, replace=False)
+        indices = np.random.choice(len(testset_full_raw), 10000, replace=False)
         testset = [testset_full_raw[i] for i in indices]
         test_loader_adv_raw = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=False)
         x_test_torch_adv, y_test_torch_adv_int = next(iter(test_loader_adv_raw))
@@ -1152,9 +1071,9 @@ def train_qvit(n_train, n_test, n_epochs, batch_size=64, rep_num=0, lipschitz_fr
 
 # Constants
 # n_test = 4000
-n_epochs = 2
+n_epochs = 100
 n_reps = 1 # Consider reducing for faster testing of 10-class setup
-train_sizes = [50,100] # Consider smaller sizes first for 10-class
+train_sizes = [50000] # Consider smaller sizes first for 10-class
 BATCH_SIZE = 64 # Define a global batch size or pass it around
 
 def run_iterations(n_train, current_batch_size, lipschitz_frequency=1, measure_lipschitz=True,
@@ -1172,7 +1091,7 @@ def run_iterations(n_train, current_batch_size, lipschitz_frequency=1, measure_l
         if n_train == max(train_sizes):
 
             # --- Adversarial Evaluation: run after training, using in-memory model/params ---
-            N_TEST_ADVERSARIAL = 50
+            N_TEST_ADVERSARIAL = 10000
 
             def create_patches(images, patch_size=PATCH_SIZE_CIFAR):
                 batch_size = images.shape[0]
@@ -1289,7 +1208,7 @@ if __name__ == "__main__":
         print(f"\n=== Starting training for train size {n_train_current}, batch size {BATCH_SIZE} ===")
         results = run_iterations(n_train_current, BATCH_SIZE, 
                             lipschitz_frequency=1, measure_lipschitz=True,
-                            adversarial_frequency=1, measure_adversarial=True)
+                            adversarial_frequency=1, measure_adversarial=False)
         all_results_collected.append(results)
 
     # Combine all results

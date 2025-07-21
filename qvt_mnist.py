@@ -807,7 +807,7 @@ def train_qvit(n_train, n_test, n_epochs, batch_size=64, rep_num=0, lipschitz_fr
         # Load test data for fidelity evaluation (load once, reuse)
         transform_raw_test = transforms.Compose([transforms.ToTensor()])
         testset_full_raw = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_raw_test)
-        indices = np.random.choice(len(testset_full_raw), 50, replace=False)
+        indices = np.random.choice(len(testset_full_raw), 10000, replace=False)
         testset = [testset_full_raw[i] for i in indices]
         test_loader_adv_raw = torch.utils.data.DataLoader(testset, batch_size=64, shuffle=False)
         x_test_torch_adv, y_test_torch_adv_int = next(iter(test_loader_adv_raw))
@@ -1006,9 +1006,9 @@ def train_qvit(n_train, n_test, n_epochs, batch_size=64, rep_num=0, lipschitz_fr
 # Constants for MNIST experiment
 # MNIST has 60,000 training images, 10,000 test images
 # n_test_mnist = 10000 # Using full test set for MNIST
-n_epochs_mnist = 2  # MNIST might train faster, adjust as needed
+n_epochs_mnist = 100  # MNIST might train faster, adjust as needed
 n_reps_mnist = 1
-train_sizes_mnist = [50,100] # Example sizes for MNIST
+train_sizes_mnist = [60000] # Example sizes for MNIST
 BATCH_SIZE_MNIST = 64
 
 def run_iterations(n_train, current_batch_size, num_epochs_current, lipschitz_frequency=1, measure_lipschitz=True, 
@@ -1028,7 +1028,7 @@ def run_iterations(n_train, current_batch_size, num_epochs_current, lipschitz_fr
         if n_train == max(train_sizes_mnist):
 
             # --- Adversarial Evaluation: run after training, using in-memory model/params ---
-            N_TEST_ADVERSARIAL = 50
+            N_TEST_ADVERSARIAL = 10000
             
             def load_mnist_data_raw(n_samples, train=False, batch_size=64):
                 transform = transforms.Compose([transforms.ToTensor()])
@@ -1106,7 +1106,7 @@ if __name__ == "__main__":
         print(f"=== Starting training for MNIST: train size {n_train_current}, batch size {BATCH_SIZE_MNIST}, epochs {n_epochs_mnist} ===")
         results = run_iterations(n_train_current, BATCH_SIZE_MNIST, n_epochs_mnist, 
                             lipschitz_frequency=1, measure_lipschitz=True,
-                            adversarial_frequency=1, measure_adversarial=True)
+                            adversarial_frequency=1, measure_adversarial=False)
         all_results_collected_mnist.append(results)
 
     results_df_combined_mnist = pd.concat(all_results_collected_mnist, ignore_index=True)
